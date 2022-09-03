@@ -1,97 +1,48 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
-	"github.com/tidwall/gjson"
+	"github.com/rpsl/sentry-mattermost-sidecar/config"
+	mCfg "github.com/rpsl/sentry-mattermost-sidecar/middlewares"
+	routers "github.com/rpsl/sentry-mattermost-sidecar/routes"
+	log "github.com/sirupsen/logrus"
+	ginlogrus "github.com/toorop/gin-logrus"
 )
 
-func init() {
-	viper.SetEnvPrefix("sms")
-
-	_ = viper.BindEnv("mattermost_webhook_url")
-	_ = viper.BindEnv("host")
-	_ = viper.BindEnv("port")
-
-	viper.SetDefault("addr", "0.0.0.0")
-	viper.SetDefault("port", "1323")
-
-	if viper.GetString("mattermost_webhook_url") == "" {
-		log.Fatalf("SMS_MATTERMOST_WEBHOOK_URL environment variable must be set!")
-	}
-}
-
 func main() {
-	r := gin.New()
-	r.Use(gin.Logger())
-	r.Use(gin.Recovery())
-
-	r.POST("/:channel", func(c *gin.Context) {
-		channel := c.Param("channel")
-
-		jsonByteData, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			log.Fatalf("Error reading body: %v", err)
-		}
-		jsonStringData := string(jsonByteData)
-
-		postBody, err := json.Marshal(map[string]interface{}{
-			"channel": channel,
-			"attachments": []interface{}{
-				map[string]interface{}{
-					"title":       gjson.Get(jsonStringData, "event.title").String(),
-					"color":       "#FF0000",
-					"author_name": "Sentry",
-					"author_icon": "https://assets.stickpng.com/images/58482eedcef1014c0b5e4a76.png",
-					"title_link":  gjson.Get(jsonStringData, "url").String(),
-					"fields": []interface{}{
-						map[string]interface{}{
-							"short": false,
-							"title": "Culprit",
-							"value": gjson.Get(jsonStringData, "culprit").String(),
-						},
-						map[string]interface{}{
-							"short": false,
-							"title": "Project",
-							"value": gjson.Get(jsonStringData, "project_slug").String(),
-						},
-						map[string]interface{}{
-							"short": false,
-							"title": "Environment",
-							"value": gjson.Get(jsonStringData, "event.environment").String(),
-						},
-					},
-				},
-			},
-		})
-
-		if err != nil {
-			log.Fatalf("Error during json marshal: %v", err)
-		}
-
-		resp, err := http.Post(
-			viper.GetString("mattermost_webhook_url"),
-			"application/json",
-			bytes.NewBuffer(postBody),
-		)
-		if err != nil {
-			log.Fatalf("Error when performing webhook call: %v", err)
-		}
-		defer func() {
-			_ = resp.Body.Close()
-		}()
+	log.SetFormatter(&log.TextFormatter{
+		TimestampFormat: time.RFC3339,
+		FullTimestamp:   true,
 	})
+
+	cfg, err := config.LoadConfig()
+
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
+
+	// todo: print motd screen on start
+	log.Println(cfg.Debug)
+
+	if !cfg.Debug {
+		gin.SetMode(gin.ReleaseMode)
+		log.Infoln("Web server started in Release mode")
+	} else {
+		log.Infoln("Web server started in DEBUG mode")
+	}
+
+	r := gin.New()
+	r.Use(ginlogrus.Logger(log.New()), gin.Recovery())
+	r.Use(mCfg.AttachConfig(cfg))
+
+	routers.SetRoutes(r)
 
 	_ = r.Run(fmt.Sprintf(
 		"%s:%s",
-		viper.GetString("host"),
-		viper.GetString("port"),
+		cfg.ListenHost,
+		cfg.ListenPort,
 	))
 }
