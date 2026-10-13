@@ -76,6 +76,7 @@ func SentryWebHookHandler(c *gin.Context) {
 			"result": "",
 			"error":  "can't parse input payload",
 		})
+
 		return
 	}
 
@@ -88,6 +89,7 @@ func SentryWebHookHandler(c *gin.Context) {
 			"result": "",
 			"error":  "internal error",
 		})
+
 		return
 	}
 
@@ -95,19 +97,33 @@ func SentryWebHookHandler(c *gin.Context) {
 	cfg := c.Value("cfg").(*config.Config)
 
 	// todo: wrap into goroutine
+	if status, errMsg := sendToMattermost(cfg.WebhookURL, channel, mmPayload); errMsg != "" {
+		c.AbortWithStatusJSON(status, gin.H{
+			"result": "",
+			"error":  errMsg,
+		})
+
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"result": "success",
+		"error":  nil,
+	})
+}
+
+// sendToMattermost returns the status for the response to Sentry and an error message,
+// which is empty when Mattermost accepted the payload.
+func sendToMattermost(webhookURL, channel string, mmPayload []byte) (int, string) {
 	resp, err := http.Post(
-		cfg.WebhookURL,
+		webhookURL,
 		"application/json",
 		bytes.NewBuffer(mmPayload),
 	)
-
 	if err != nil {
 		log.WithError(err).Error("can't send payload to mattermost")
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-			"result": "",
-			"error":  "internal error",
-		})
-		return
+
+		return http.StatusInternalServerError, "internal error"
 	}
 
 	defer func() {
@@ -121,17 +137,11 @@ func SentryWebHookHandler(c *gin.Context) {
 			"statusCode": resp.StatusCode,
 			"response":   string(body),
 		}).Error("mattermost rejected payload")
-		c.AbortWithStatusJSON(http.StatusBadGateway, gin.H{
-			"result": "",
-			"error":  "mattermost rejected payload",
-		})
-		return
+
+		return http.StatusBadGateway, "mattermost rejected payload"
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"result": "success",
-		"error":  nil,
-	})
+	return http.StatusOK, ""
 }
 
 func makeMMPayload(channel string, sentryJSONPayload string) ([]byte, error) {
