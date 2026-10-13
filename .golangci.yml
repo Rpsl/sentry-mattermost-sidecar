@@ -12,7 +12,6 @@ linters:
     - misspell
     - nakedret
     - rowserrcheck
-    - exportloopref
     - stylecheck
     - unconvert
     - whitespace
@@ -22,6 +21,8 @@ linters:
 
 run:
   deadline: 3m
-  skip-dirs:
+
+issues:
+  exclude-dirs:
     - bin
     - docs
